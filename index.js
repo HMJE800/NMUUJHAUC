@@ -53,7 +53,7 @@ function blueBoxSpeech(s) {
   else if (s.stillToGive < -0.01) main = `יש עודף אצל השליח של ${ils(Math.abs(s.stillToGive))} שקלים`;
   else                            main = 'אין צורך להעביר עוד לשליח';
   const debt = Math.abs(s.debtToAgent) < 0.01 ? 'אין חוב לאחראי' : `החוב לאחראי הוא ${ils(s.debtToAgent)} שקלים`;
-  return `${main}. ${debt}.`;
+  return `${main} ${debt}`;
 }
 
 /* ---------- כתיבה ל‑Firestore ---------- */
@@ -80,34 +80,34 @@ router.get('/', async (call) => {
   console.log('📞 שיחה חדשה');
   try {
     if (PIN) {
-      const pin = await call.read([{ type: 'text', data: 'נא הקש את קוד הגישה, ואחריו סולמית' }],
+      const pin = await call.read([{ type: 'text', data: 'נא הקש את קוד הגישה ואחריו סולמית' }],
         'tap', { max_digits: 8, min_digits: 1 });
-      if (pin !== PIN) return call.id_list_message([{ type: 'text', data: 'קוד שגוי. להתראות.' }]);
+      if (pin !== PIN) return call.id_list_message([{ type: 'text', data: 'קוד שגוי להתראות' }]);
     }
 
-    const raw = await call.read([{ type: 'text', data: 'נא הקש את הסכום שנתת לשליח, בשקלים שלמים, ואחריו סולמית' }],
+    const raw = await call.read([{ type: 'text', data: 'נא הקש את הסכום שנתת לשליח בשקלים שלמים ואחריו סולמית' }],
       'tap', { max_digits: 7, min_digits: 1 });
     console.log('   סכום שהוקש:', raw);
     const amount = parseInt(raw, 10);
-    if (!amount || amount <= 0) return call.id_list_message([{ type: 'text', data: 'סכום לא תקין. להתראות.' }]);
+    if (!amount || amount <= 0) return call.id_list_message([{ type: 'text', data: 'סכום לא תקין להתראות' }]);
 
-    const confirm = await call.read([{ type: 'text', data: `הקשת ${amount} שקלים. לאישור הקש 1, לביטול הקש 2` }],
+    const confirm = await call.read([{ type: 'text', data: `הקשת ${amount} שקלים לאישור הקש 1 לביטול הקש 2` }],
       'tap', { max_digits: 1, min_digits: 1 });
-    if (confirm !== '1') return call.id_list_message([{ type: 'text', data: 'הפעולה בוטלה. להתראות.' }]);
+    if (confirm !== '1') return call.id_list_message([{ type: 'text', data: 'הפעולה בוטלה להתראות' }]);
 
     const { summary } = await addShipperPayment(amount);
     console.log('   ✅ נרשם:', amount);
 
     return call.id_list_message([
-      { type: 'text', data: `נרשם בהצלחה. נתת לשליח ${amount} שקלים.` },
+      { type: 'text', data: `נרשם בהצלחה נתת לשליח ${amount} שקלים` },
       { type: 'text', data: blueBoxSpeech(summary) },
-      { type: 'text', data: 'להתראות.' },
+      { type: 'text', data: 'להתראות' },
     ]);
   } catch (err) {
     if (err && err.isExitError) return;               // המתקשר ניתק — לא שגיאה אמיתית
     console.error('❌ שגיאה בשיחה:', err && err.message ? err.message : err);
     try {
-      return call.id_list_message([{ type: 'text', data: 'אירעה שגיאה. נסה שוב מאוחר יותר.' }]);
+      return call.id_list_message([{ type: 'text', data: 'אירעה שגיאה נסה שוב מאוחר יותר' }]);
     } catch (e2) {
       console.error('   (לא ניתן היה לשלוח הודעת שגיאה)');
     }
