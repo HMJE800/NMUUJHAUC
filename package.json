@@ -1,0 +1,15 @@
+{
+  "name": "yemot-shipper",
+  "version": "1.0.0",
+  "description": "רישום 'נתתי לשליח' דרך הטלפון (ימות המשיח) אל Firebase Firestore",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "firebase-admin": "^12.1.0",
+    "yemot-router2": "^2.0.0"
+  }
+}
