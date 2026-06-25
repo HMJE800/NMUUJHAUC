@@ -176,7 +176,9 @@ router.get('/', async (call) => {
       const msgs = [{ type: 'text', data: `יש ${recent.length} פעולות אחרונות` }];
       recent.forEach((e, i) => {
         const t = String(e.time || '').replace(/:/g, ' ');
-        msgs.push({ type: 'text', data: `פעולה ${i + 1} ${ils(e.amount)} שקלים בשעה ${t}` });
+        const parts = String(e.date || '').split(/[./]/);     // 23.6.2026 → [23,6,2026]
+        const d = parts.slice(0, 2).join(' ');                 // יום וחודש בלבד: "23 6"
+        msgs.push({ type: 'text', data: `פעולה ${i + 1} ${ils(e.amount)} שקלים בתאריך ${d} בשעה ${t}` });
       });
       msgs.push({ type: 'text', data: 'להתראות' });
       return call.id_list_message(msgs);
