@@ -104,6 +104,15 @@ async function getLastShipperPayment() {
   return last || null;
 }
 
+/* ---------- מציאת N הרשומות האחרונות של "נתתי לשליח" ---------- */
+async function getRecentShipperPayments(n) {
+  const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
+  const snap = await ref.get();
+  const data = snap.exists ? snap.data() : {};
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  return entries.filter(e => e.ledger === 'shipper' && e.kind === 'shipper_pay').slice(0, n);
+}
+
 /* ---------- מחיקת רשומת "נתתי לשליח" לפי מזהה (בטוח, עם טרנזקציה) ---------- */
 async function deleteShipperPaymentById(id) {
   const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
@@ -136,8 +145,8 @@ router.get('/', async (call) => {
 
     // תפריט ראשי
     const choice = await call.read([{ type: 'text',
-      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4' }],
-      'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4] });
+      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4 לשמיעת הפעולות האחרונות הקש 5' }],
+      'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5] });
     console.log('   בחירת תפריט:', choice);
 
     /* ===== 2: שמיעת מצב השליח (עודף/חוב) בלבד ===== */
@@ -156,6 +165,21 @@ router.get('/', async (call) => {
         { type: 'text', data: agentDebtLine(s) },
         { type: 'text', data: 'להתראות' },
       ]);
+    }
+
+    /* ===== 5: שמיעת הפעולות האחרונות ===== */
+    if (choice === '5') {
+      const recent = await getRecentShipperPayments(5);
+      if (recent.length === 0) {
+        return call.id_list_message([{ type: 'text', data: 'אין פעולות להשמעה להתראות' }]);
+      }
+      const msgs = [{ type: 'text', data: `יש ${recent.length} פעולות אחרונות` }];
+      recent.forEach((e, i) => {
+        const t = String(e.time || '').replace(/:/g, ' ');
+        msgs.push({ type: 'text', data: `פעולה ${i + 1} ${ils(e.amount)} שקלים בשעה ${t}` });
+      });
+      msgs.push({ type: 'text', data: 'להתראות' });
+      return call.id_list_message(msgs);
     }
 
     /* ===== 4: מחיקת הפעולה האחרונה של "נתתי לשליח" ===== */
