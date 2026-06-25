@@ -46,14 +46,25 @@ function computeShipperSummary(entries) {
 }
 
 /* ---------- ניסוח "הריבוע הכחול" ---------- */
+const ils = (n) => Math.round(n);
+
+// שורת מצב השליח (הריבוע הכחול)
+function shipperLine(s) {
+  if (s.stillToGive > 0.01)       return `עליך להעביר לשליח עוד ${ils(s.stillToGive)} שקלים`;
+  else if (s.stillToGive < -0.01) return `יש עודף אצל השליח של ${ils(Math.abs(s.stillToGive))} שקלים`;
+  else                            return 'אין צורך להעביר עוד לשליח';
+}
+
+// שורת החוב/עודף לאחראי
+function agentDebtLine(s) {
+  if (s.debtToAgent > 0.01)       return `החוב לאחראי הוא ${ils(s.debtToAgent)} שקלים`;
+  else if (s.debtToAgent < -0.01) return `יש עודף אצל האחראי של ${ils(Math.abs(s.debtToAgent))} שקלים`;
+  else                            return 'אין חוב לאחראי';
+}
+
+// שתי השורות יחד (לסיום שיחת הוספת כסף)
 function blueBoxSpeech(s) {
-  const ils = (n) => Math.round(n);
-  let main;
-  if (s.stillToGive > 0.01)       main = `עליך להעביר לשליח עוד ${ils(s.stillToGive)} שקלים`;
-  else if (s.stillToGive < -0.01) main = `יש עודף אצל השליח של ${ils(Math.abs(s.stillToGive))} שקלים`;
-  else                            main = 'אין צורך להעביר עוד לשליח';
-  const debt = Math.abs(s.debtToAgent) < 0.01 ? 'אין חוב לאחראי' : `החוב לאחראי הוא ${ils(s.debtToAgent)} שקלים`;
-  return `${main} ${debt}`;
+  return `${shipperLine(s)} ${agentDebtLine(s)}`;
 }
 
 /* ---------- כתיבה ל‑Firestore ---------- */
@@ -73,6 +84,44 @@ async function addShipperPayment(amount) {
   return { entry, summary };
 }
 
+/* ---------- קריאת מצב בלבד (בלי לכתוב) ---------- */
+async function getSummary() {
+  const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
+  const snap = await ref.get();
+  const data = snap.exists ? snap.data() : {};
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  return computeShipperSummary(entries);
+}
+
+/* ---------- מציאת הרשומה האחרונה של "נתתי לשליח" (בלי למחוק) ---------- */
+async function getLastShipperPayment() {
+  const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
+  const snap = await ref.get();
+  const data = snap.exists ? snap.data() : {};
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  // הרשומות החדשות בראש המערך — נחפש את הראשונה מסוג shipper_pay
+  const last = entries.find(e => e.ledger === 'shipper' && e.kind === 'shipper_pay');
+  return last || null;
+}
+
+/* ---------- מחיקת רשומת "נתתי לשליח" לפי מזהה (בטוח, עם טרנזקציה) ---------- */
+async function deleteShipperPaymentById(id) {
+  const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
+  let summary, deleted = false;
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : {};
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    const idx = entries.findIndex(e => e.id === id && e.ledger === 'shipper' && e.kind === 'shipper_pay');
+    if (idx === -1) { summary = computeShipperSummary(entries); return; }
+    entries.splice(idx, 1); // הסרת הרשומה
+    tx.set(ref, { entries, updatedAt: Date.now() }, { merge: true });
+    summary = computeShipperSummary(entries);
+    deleted = true;
+  });
+  return { deleted, summary };
+}
+
 /* ---------- מערכת הטלפון ---------- */
 const router = YemotRouter({ printLog: false, defaults: { removeInvalidChars: true, read: { timeout: 60000 } } });
 
@@ -85,6 +134,56 @@ router.get('/', async (call) => {
       if (pin !== PIN) return call.id_list_message([{ type: 'text', data: 'קוד שגוי להתראות' }]);
     }
 
+    // תפריט ראשי
+    const choice = await call.read([{ type: 'text',
+      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4' }],
+      'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4] });
+    console.log('   בחירת תפריט:', choice);
+
+    /* ===== 2: שמיעת מצב השליח (עודף/חוב) בלבד ===== */
+    if (choice === '2') {
+      const s = await getSummary();
+      return call.id_list_message([
+        { type: 'text', data: shipperLine(s) },
+        { type: 'text', data: 'להתראות' },
+      ]);
+    }
+
+    /* ===== 3: שמיעת חוב/עודף לאחראי בלבד ===== */
+    if (choice === '3') {
+      const s = await getSummary();
+      return call.id_list_message([
+        { type: 'text', data: agentDebtLine(s) },
+        { type: 'text', data: 'להתראות' },
+      ]);
+    }
+
+    /* ===== 4: מחיקת הפעולה האחרונה של "נתתי לשליח" ===== */
+    if (choice === '4') {
+      const last = await getLastShipperPayment();
+      if (!last) {
+        return call.id_list_message([{ type: 'text', data: 'אין פעולות למחיקה להתראות' }]);
+      }
+      const safeTime = String(last.time || '').replace(/:/g, ' ');
+      const delConfirm = await call.read([{ type: 'text',
+        data: `הפעולה האחרונה היא ${ils(last.amount)} שקלים שנרשמה בשעה ${safeTime} למחיקה הקש 1 לביטול הקש 2` }],
+        'tap', { max_digits: 1, min_digits: 1 });
+      if (delConfirm !== '1') {
+        return call.id_list_message([{ type: 'text', data: 'המחיקה בוטלה להתראות' }]);
+      }
+      const { deleted, summary } = await deleteShipperPaymentById(last.id);
+      console.log('   🗑️ מחיקה:', last.amount, deleted ? 'הצליח' : 'לא נמצא');
+      if (!deleted) {
+        return call.id_list_message([{ type: 'text', data: 'הפעולה כבר נמחקה להתראות' }]);
+      }
+      return call.id_list_message([
+        { type: 'text', data: `הפעולה נמחקה בהצלחה` },
+        { type: 'text', data: blueBoxSpeech(summary) },
+        { type: 'text', data: 'להתראות' },
+      ]);
+    }
+
+    /* ===== 1: הוספת כסף לשליח ===== */
     const raw = await call.read([{ type: 'text', data: 'נא הקש את הסכום שנתת לשליח בשקלים שלמים ואחריו סולמית' }],
       'tap', { max_digits: 7, min_digits: 1 });
     console.log('   סכום שהוקש:', raw);
