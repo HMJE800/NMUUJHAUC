@@ -113,13 +113,22 @@ async function getRecentShipperPayments(n) {
   return entries.filter(e => e.ledger === 'shipper' && e.kind === 'shipper_pay').slice(0, n);
 }
 
-/* ---------- מציאת N ההזמנות האחרונות (מסד הזמנות) ---------- */
-async function getRecentOrders(n) {
+// שם הסוג בעברית (כמו במערכת)
+function kindLabel(kind) {
+  return kind === 'order'    ? 'רכישת סחורה'
+       : kind === 'payment'  ? 'קבלת תשלום'
+       : kind === 'delivery' ? 'הוצאת משלוח'
+       : kind === 'expense'  ? 'הוצאה'
+       : 'רשומה';
+}
+
+/* ---------- שליפת כל מסד ההזמנות (כל הסוגים, מלבד נתתי לשליח) ---------- */
+async function getAllLedger() {
   const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
   const snap = await ref.get();
   const data = snap.exists ? snap.data() : {};
   const entries = Array.isArray(data.entries) ? data.entries : [];
-  return entries.filter(e => e.kind === 'order').slice(0, n);
+  return entries.filter(e => ['order', 'payment', 'delivery', 'expense'].includes(e.kind));
 }
 
 /* ---------- מחיקת רשומת "נתתי לשליח" לפי מזהה (בטוח, עם טרנזקציה) ---------- */
@@ -154,7 +163,7 @@ router.get('/', async (call) => {
 
     // תפריט ראשי
     const choice = await call.read([{ type: 'text',
-      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4 לשמיעת הפעולות האחרונות הקש 5 לשמיעת ההזמנות האחרונות הקש 6' }],
+      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4 לשמיעת הפעולות האחרונות הקש 5 לשמיעת כל מסד ההזמנות הקש 6' }],
       'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5, 6] });
     console.log('   בחירת תפריט:', choice);
 
@@ -193,18 +202,18 @@ router.get('/', async (call) => {
       return call.id_list_message(msgs);
     }
 
-    /* ===== 6: שמיעת ההזמנות האחרונות (מסד הזמנות) ===== */
+    /* ===== 6: שמיעת כל מסד ההזמנות ===== */
     if (choice === '6') {
-      const recent = await getRecentOrders(5);
-      if (recent.length === 0) {
-        return call.id_list_message([{ type: 'text', data: 'אין הזמנות להשמעה להתראות' }]);
+      const all = await getAllLedger();
+      if (all.length === 0) {
+        return call.id_list_message([{ type: 'text', data: 'אין רשומות במסד להשמעה להתראות' }]);
       }
-      const msgs = [{ type: 'text', data: `יש ${recent.length} הזמנות אחרונות` }];
-      recent.forEach((e, i) => {
+      const msgs = [{ type: 'text', data: `יש ${all.length} רשומות במסד` }];
+      all.forEach((e, i) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);
         const d = parts.slice(0, 2).join(' ');
-        msgs.push({ type: 'text', data: `הזמנה ${i + 1} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}` });
+        msgs.push({ type: 'text', data: `רשומה ${i + 1} ${kindLabel(e.kind)} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}` });
       });
       msgs.push({ type: 'text', data: 'להתראות' });
       return call.id_list_message(msgs);
