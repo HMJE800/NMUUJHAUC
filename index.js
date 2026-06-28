@@ -50,15 +50,15 @@ const ils = (n) => Math.round(n);
 
 // שורת מצב השליח (הריבוע הכחול)
 function shipperLine(s) {
-  if (s.stillToGive > 0.01)       return `עליך להעביר לשליח עוד ${ils(s.stillToGive)} שקלים`;
-  else if (s.stillToGive < -0.01) return `יש עודף אצל השליח של ${ils(Math.abs(s.stillToGive))} שקלים`;
+  if (s.stillToGive > 0.01)       return `עליך להעביר לשליח עוד ${ils(s.stillToGive)} דולר`;
+  else if (s.stillToGive < -0.01) return `יש עודף אצל השליח של ${ils(Math.abs(s.stillToGive))} דולר`;
   else                            return 'אין צורך להעביר עוד לשליח';
 }
 
 // שורת החוב/עודף לאחראי
 function agentDebtLine(s) {
-  if (s.debtToAgent > 0.01)       return `החוב לאחראי הוא ${ils(s.debtToAgent)} שקלים`;
-  else if (s.debtToAgent < -0.01) return `יש עודף אצל האחראי של ${ils(Math.abs(s.debtToAgent))} שקלים`;
+  if (s.debtToAgent > 0.01)       return `החוב לאחראי הוא ${ils(s.debtToAgent)} דולר`;
+  else if (s.debtToAgent < -0.01) return `יש עודף אצל האחראי של ${ils(Math.abs(s.debtToAgent))} דולר`;
   else                            return 'אין חוב לאחראי';
 }
 
@@ -113,6 +113,15 @@ async function getRecentShipperPayments(n) {
   return entries.filter(e => e.ledger === 'shipper' && e.kind === 'shipper_pay').slice(0, n);
 }
 
+/* ---------- מציאת N ההזמנות האחרונות (מסד הזמנות) ---------- */
+async function getRecentOrders(n) {
+  const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
+  const snap = await ref.get();
+  const data = snap.exists ? snap.data() : {};
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+  return entries.filter(e => e.kind === 'order').slice(0, n);
+}
+
 /* ---------- מחיקת רשומת "נתתי לשליח" לפי מזהה (בטוח, עם טרנזקציה) ---------- */
 async function deleteShipperPaymentById(id) {
   const ref = db.collection('workspaces').doc(WORKSPACE_CODE);
@@ -145,8 +154,8 @@ router.get('/', async (call) => {
 
     // תפריט ראשי
     const choice = await call.read([{ type: 'text',
-      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4 לשמיעת הפעולות האחרונות הקש 5' }],
-      'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5] });
+      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4 לשמיעת הפעולות האחרונות הקש 5 לשמיעת ההזמנות האחרונות הקש 6' }],
+      'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5, 6] });
     console.log('   בחירת תפריט:', choice);
 
     /* ===== 2: שמיעת מצב השליח (עודף/חוב) בלבד ===== */
@@ -178,13 +187,28 @@ router.get('/', async (call) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);     // 23.6.2026 → [23,6,2026]
         const d = parts.slice(0, 2).join(' ');                 // יום וחודש בלבד: "23 6"
-        msgs.push({ type: 'text', data: `פעולה ${i + 1} ${ils(e.amount)} שקלים בתאריך ${d} בשעה ${t}` });
+        msgs.push({ type: 'text', data: `פעולה ${i + 1} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}` });
       });
       msgs.push({ type: 'text', data: 'להתראות' });
       return call.id_list_message(msgs);
     }
 
-    /* ===== 4: מחיקת הפעולה האחרונה של "נתתי לשליח" ===== */
+    /* ===== 6: שמיעת ההזמנות האחרונות (מסד הזמנות) ===== */
+    if (choice === '6') {
+      const recent = await getRecentOrders(5);
+      if (recent.length === 0) {
+        return call.id_list_message([{ type: 'text', data: 'אין הזמנות להשמעה להתראות' }]);
+      }
+      const msgs = [{ type: 'text', data: `יש ${recent.length} הזמנות אחרונות` }];
+      recent.forEach((e, i) => {
+        const t = String(e.time || '').replace(/:/g, ' ');
+        const parts = String(e.date || '').split(/[./]/);
+        const d = parts.slice(0, 2).join(' ');
+        msgs.push({ type: 'text', data: `הזמנה ${i + 1} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}` });
+      });
+      msgs.push({ type: 'text', data: 'להתראות' });
+      return call.id_list_message(msgs);
+    }
     if (choice === '4') {
       const last = await getLastShipperPayment();
       if (!last) {
@@ -192,7 +216,7 @@ router.get('/', async (call) => {
       }
       const safeTime = String(last.time || '').replace(/:/g, ' ');
       const delConfirm = await call.read([{ type: 'text',
-        data: `הפעולה האחרונה היא ${ils(last.amount)} שקלים שנרשמה בשעה ${safeTime} למחיקה הקש 1 לביטול הקש 2` }],
+        data: `הפעולה האחרונה היא ${ils(last.amount)} דולר שנרשמה בשעה ${safeTime} למחיקה הקש 1 לביטול הקש 2` }],
         'tap', { max_digits: 1, min_digits: 1 });
       if (delConfirm !== '1') {
         return call.id_list_message([{ type: 'text', data: 'המחיקה בוטלה להתראות' }]);
@@ -210,13 +234,13 @@ router.get('/', async (call) => {
     }
 
     /* ===== 1: הוספת כסף לשליח ===== */
-    const raw = await call.read([{ type: 'text', data: 'נא הקש את הסכום שנתת לשליח בשקלים שלמים ואחריו סולמית' }],
+    const raw = await call.read([{ type: 'text', data: 'נא הקש את הסכום שנתת לשליח בדולרים שלמים ואחריו סולמית' }],
       'tap', { max_digits: 7, min_digits: 1 });
     console.log('   סכום שהוקש:', raw);
     const amount = parseInt(raw, 10);
     if (!amount || amount <= 0) return call.id_list_message([{ type: 'text', data: 'סכום לא תקין להתראות' }]);
 
-    const confirm = await call.read([{ type: 'text', data: `הקשת ${amount} שקלים לאישור הקש 1 לביטול הקש 2` }],
+    const confirm = await call.read([{ type: 'text', data: `הקשת ${amount} דולר לאישור הקש 1 לביטול הקש 2` }],
       'tap', { max_digits: 1, min_digits: 1 });
     if (confirm !== '1') return call.id_list_message([{ type: 'text', data: 'הפעולה בוטלה להתראות' }]);
 
@@ -224,7 +248,7 @@ router.get('/', async (call) => {
     console.log('   ✅ נרשם:', amount);
 
     return call.id_list_message([
-      { type: 'text', data: `נרשם בהצלחה נתת לשליח ${amount} שקלים` },
+      { type: 'text', data: `נרשם בהצלחה נתת לשליח ${amount} דולר` },
       { type: 'text', data: blueBoxSpeech(summary) },
       { type: 'text', data: 'להתראות' },
     ]);
