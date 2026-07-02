@@ -48,6 +48,14 @@ function computeShipperSummary(entries) {
 /* ---------- ניסוח "הריבוע הכחול" ---------- */
 const ils = (n) => Math.round(n);
 
+const BOXES_PER_CRATE = 24; // קופסאות בארגז (כמו במערכת)
+
+// ניקוי טקסט להקראה: מ"ג → מיליגרם, והסרת תווים שימות דוחה (גרשיים נקודה פסיק)
+const cleanTxt = (s) => String(s || '').replace(/מ"ג/g, 'מיליגרם').replace(/["'.,]/g, ' ').replace(/\s+/g, ' ').trim();
+
+// קריאת מספר עשרוני בבטחה: 16.3 → "16 נקודה 3"
+const sayNum = (n) => String(n).replace('.', ' נקודה ');
+
 // שורת מצב השליח (הריבוע הכחול)
 function shipperLine(s) {
   if (s.stillToGive > 0.01)       return `עליך להעביר לשליח עוד ${ils(s.stillToGive)} דולר`;
@@ -204,16 +212,37 @@ router.get('/', async (call) => {
 
     /* ===== 6: שמיעת כל מסד ההזמנות ===== */
     if (choice === '6') {
-      const all = await getAllLedger();
+      const all = (await getAllLedger()).slice(0, 3);
       if (all.length === 0) {
         return call.id_list_message([{ type: 'text', data: 'אין רשומות במסד להשמעה להתראות' }]);
       }
-      const msgs = [{ type: 'text', data: `יש ${all.length} רשומות במסד` }];
+      const msgs = [{ type: 'text', data: `שלוש הרשומות האחרונות במסד` }];
       all.forEach((e, i) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);
         const d = parts.slice(0, 2).join(' ');
         msgs.push({ type: 'text', data: `רשומה ${i + 1} ${kindLabel(e.kind)} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}` });
+
+        // פירוט פריטים ומחירים (בעיקר להזמנות/רכישת סחורה)
+        if (Array.isArray(e.items) && e.items.length > 0) {
+          e.items.forEach((item) => {
+            const prod = cleanTxt(item.product);
+            const opt = cleanTxt(item.option);
+            let line = `${prod} ${opt} ${item.count} ארגזים`;
+            if (item.boxPrice && item.boxPrice > 0) {
+              const boxes = item.count * BOXES_PER_CRATE;
+              line += ` מחיר לקופסה ${sayNum(item.boxPrice)} דולר ${boxes} קופסאות`;
+            }
+            msgs.push({ type: 'text', data: line });
+          });
+        }
+        if (e.discount && e.discount > 0) {
+          msgs.push({ type: 'text', data: `הנחה ${sayNum(e.discount)} דולר` });
+        }
+        if (e.note) {
+          const note = cleanTxt(e.note);
+          if (note) msgs.push({ type: 'text', data: `הערה ${note}` });
+        }
       });
       msgs.push({ type: 'text', data: 'להתראות' });
       return call.id_list_message(msgs);
