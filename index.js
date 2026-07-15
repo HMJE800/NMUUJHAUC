@@ -204,7 +204,10 @@ router.get('/', async (call) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);     // 23.6.2026 → [23,6,2026]
         const d = parts.slice(0, 2).join(' ');                 // יום וחודש בלבד: "23 6"
-        msgs.push({ type: 'text', data: `פעולה ${i + 1} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}` });
+        let line = `פעולה ${i + 1} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}`;
+        const dsc = cleanTxt(e.desc || '');
+        if (dsc) line += ` פירוט ${dsc}`;
+        msgs.push({ type: 'text', data: line });
       });
       msgs.push({ type: 'text', data: 'להתראות' });
       return call.id_list_message(msgs);
@@ -239,9 +242,10 @@ router.get('/', async (call) => {
         if (e.discount && e.discount > 0) {
           msgs.push({ type: 'text', data: `הנחה ${sayNum(e.discount)} דולר` });
         }
-        if (e.note) {
-          const note = cleanTxt(e.note);
-          if (note) msgs.push({ type: 'text', data: `הערה ${note}` });
+        // פירוט: הזמנות שומרות ב‑note, משלוחים והוצאות שומרים ב‑desc
+        const detail = cleanTxt(e.note || e.desc || '');
+        if (detail) {
+          msgs.push({ type: 'text', data: `פירוט ${detail}` });
         }
       });
       msgs.push({ type: 'text', data: 'להתראות' });
