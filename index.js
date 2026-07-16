@@ -51,7 +51,22 @@ const ils = (n) => Math.round(n);
 const BOXES_PER_CRATE = 24; // קופסאות בארגז (כמו במערכת)
 
 // ניקוי טקסט להקראה: מ"ג → מיליגרם, והסרת תווים שימות דוחה (גרשיים נקודה פסיק)
-const cleanTxt = (s) => String(s || '').replace(/מ"ג/g, 'מיליגרם').replace(/["'.,]/g, ' ').replace(/\s+/g, ' ').trim();
+// מסננת קפדנית: משאירה רק אותיות עברית/אנגלית ספרות ורווחים — ימות דוחה כל השאר
+const cleanTxt = (s) => String(s || '')
+  .replace(/מ"ג/g, ' מיליגרם ')
+  .replace(/[^\u0590-\u05FFa-zA-Z0-9 ]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+// כל טקסט שנשלח לימות עובר כאן
+const say = (txt) => ({ type: 'text', data: cleanTxt(txt) });
+
+// שליחה בטוחה: מסנן הודעות ריקות, ואם אין כלום — משמיע הודעת גיבוי
+const send = (call, msgs) => {
+  const clean = msgs.filter(m => m && m.data && m.data.trim().length > 0);
+  if (clean.length === 0) clean.push(say('אין מידע להשמעה להתראות'));
+  return call.id_list_message(clean);
+};
 
 // קריאת מספר עשרוני בבטחה: 16.3 → "16 נקודה 3"
 const sayNum = (n) => String(n).replace('.', ' נקודה ');
@@ -164,9 +179,9 @@ router.get('/', async (call) => {
   console.log('📞 שיחה חדשה');
   try {
     if (PIN) {
-      const pin = await call.read([{ type: 'text', data: 'נא הקש את קוד הגישה ואחריו סולמית' }],
+      const pin = await call.read([say('נא הקש את קוד הגישה ואחריו סולמית')],
         'tap', { max_digits: 8, min_digits: 1 });
-      if (pin !== PIN) return call.id_list_message([{ type: 'text', data: 'קוד שגוי להתראות' }]);
+      if (pin !== PIN) return send(call, [say('קוד שגוי להתראות')]);
     }
 
     // תפריט ראשי
@@ -178,18 +193,18 @@ router.get('/', async (call) => {
     /* ===== 2: שמיעת מצב השליח (עודף/חוב) בלבד ===== */
     if (choice === '2') {
       const s = await getSummary();
-      return call.id_list_message([
-        { type: 'text', data: shipperLine(s) },
-        { type: 'text', data: 'להתראות' },
+      return send(call, [
+        say(shipperLine(s)),
+        say('להתראות'),
       ]);
     }
 
     /* ===== 3: שמיעת חוב/עודף לאחראי בלבד ===== */
     if (choice === '3') {
       const s = await getSummary();
-      return call.id_list_message([
-        { type: 'text', data: agentDebtLine(s) },
-        { type: 'text', data: 'להתראות' },
+      return send(call, [
+        say(agentDebtLine(s)),
+        say('להתראות'),
       ]);
     }
 
@@ -197,9 +212,9 @@ router.get('/', async (call) => {
     if (choice === '5') {
       const recent = await getRecentShipperPayments(5);
       if (recent.length === 0) {
-        return call.id_list_message([{ type: 'text', data: 'אין פעולות להשמעה להתראות' }]);
+        return send(call, [say('אין פעולות להשמעה להתראות')]);
       }
-      const msgs = [{ type: 'text', data: `יש ${recent.length} פעולות אחרונות` }];
+      const msgs = [say(`יש ${recent.length} פעולות אחרונות`)];
       recent.forEach((e, i) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);     // 23.6.2026 → [23,6,2026]
@@ -207,24 +222,24 @@ router.get('/', async (call) => {
         let line = `פעולה ${i + 1} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}`;
         const dsc = cleanTxt(e.desc || '');
         if (dsc) line += ` פירוט ${dsc}`;
-        msgs.push({ type: 'text', data: line });
+        msgs.push(say(line));
       });
-      msgs.push({ type: 'text', data: 'להתראות' });
-      return call.id_list_message(msgs);
+      msgs.push(say('להתראות'));
+      return send(call, msgs);
     }
 
     /* ===== 6: שמיעת כל מסד ההזמנות ===== */
     if (choice === '6') {
       const all = (await getAllLedger()).slice(0, 3);
       if (all.length === 0) {
-        return call.id_list_message([{ type: 'text', data: 'אין רשומות במסד להשמעה להתראות' }]);
+        return send(call, [say('אין רשומות במסד להשמעה להתראות')]);
       }
-      const msgs = [{ type: 'text', data: `שלוש הרשומות האחרונות במסד` }];
+      const msgs = [say(`שלוש הרשומות האחרונות במסד`)];
       all.forEach((e, i) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);
         const d = parts.slice(0, 2).join(' ');
-        msgs.push({ type: 'text', data: `רשומה ${i + 1} ${kindLabel(e.kind)} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}` });
+        msgs.push(say(`רשומה ${i + 1} ${kindLabel(e.kind)} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}`));
 
         // פירוט פריטים ומחירים (בעיקר להזמנות/רכישת סחורה)
         if (Array.isArray(e.items) && e.items.length > 0) {
@@ -236,69 +251,69 @@ router.get('/', async (call) => {
               const boxes = item.count * BOXES_PER_CRATE;
               line += ` מחיר לקופסה ${sayNum(item.boxPrice)} דולר ${boxes} קופסאות`;
             }
-            msgs.push({ type: 'text', data: line });
+            msgs.push(say(line));
           });
         }
         if (e.discount && e.discount > 0) {
-          msgs.push({ type: 'text', data: `הנחה ${sayNum(e.discount)} דולר` });
+          msgs.push(say(`הנחה ${sayNum(e.discount)} דולר`));
         }
         // פירוט: הזמנות שומרות ב‑note, משלוחים והוצאות שומרים ב‑desc
         const detail = cleanTxt(e.note || e.desc || '');
         if (detail) {
-          msgs.push({ type: 'text', data: `פירוט ${detail}` });
+          msgs.push(say(`פירוט ${detail}`));
         }
       });
-      msgs.push({ type: 'text', data: 'להתראות' });
-      return call.id_list_message(msgs);
+      msgs.push(say('להתראות'));
+      return send(call, msgs);
     }
     if (choice === '4') {
       const last = await getLastShipperPayment();
       if (!last) {
-        return call.id_list_message([{ type: 'text', data: 'אין פעולות למחיקה להתראות' }]);
+        return send(call, [say('אין פעולות למחיקה להתראות')]);
       }
       const safeTime = String(last.time || '').replace(/:/g, ' ');
       const delConfirm = await call.read([{ type: 'text',
         data: `הפעולה האחרונה היא ${ils(last.amount)} דולר שנרשמה בשעה ${safeTime} למחיקה הקש 1 לביטול הקש 2` }],
         'tap', { max_digits: 1, min_digits: 1 });
       if (delConfirm !== '1') {
-        return call.id_list_message([{ type: 'text', data: 'המחיקה בוטלה להתראות' }]);
+        return send(call, [say('המחיקה בוטלה להתראות')]);
       }
       const { deleted, summary } = await deleteShipperPaymentById(last.id);
       console.log('   🗑️ מחיקה:', last.amount, deleted ? 'הצליח' : 'לא נמצא');
       if (!deleted) {
-        return call.id_list_message([{ type: 'text', data: 'הפעולה כבר נמחקה להתראות' }]);
+        return send(call, [say('הפעולה כבר נמחקה להתראות')]);
       }
-      return call.id_list_message([
-        { type: 'text', data: `הפעולה נמחקה בהצלחה` },
-        { type: 'text', data: blueBoxSpeech(summary) },
-        { type: 'text', data: 'להתראות' },
+      return send(call, [
+        say(`הפעולה נמחקה בהצלחה`),
+        say(blueBoxSpeech(summary)),
+        say('להתראות'),
       ]);
     }
 
     /* ===== 1: הוספת כסף לשליח ===== */
-    const raw = await call.read([{ type: 'text', data: 'נא הקש את הסכום שנתת לשליח בדולרים שלמים ואחריו סולמית' }],
+    const raw = await call.read([say('נא הקש את הסכום שנתת לשליח בדולרים שלמים ואחריו סולמית')],
       'tap', { max_digits: 7, min_digits: 1 });
     console.log('   סכום שהוקש:', raw);
     const amount = parseInt(raw, 10);
-    if (!amount || amount <= 0) return call.id_list_message([{ type: 'text', data: 'סכום לא תקין להתראות' }]);
+    if (!amount || amount <= 0) return send(call, [say('סכום לא תקין להתראות')]);
 
-    const confirm = await call.read([{ type: 'text', data: `הקשת ${amount} דולר לאישור הקש 1 לביטול הקש 2` }],
+    const confirm = await call.read([say(`הקשת ${amount} דולר לאישור הקש 1 לביטול הקש 2`)],
       'tap', { max_digits: 1, min_digits: 1 });
-    if (confirm !== '1') return call.id_list_message([{ type: 'text', data: 'הפעולה בוטלה להתראות' }]);
+    if (confirm !== '1') return send(call, [say('הפעולה בוטלה להתראות')]);
 
     const { summary } = await addShipperPayment(amount);
     console.log('   ✅ נרשם:', amount);
 
-    return call.id_list_message([
-      { type: 'text', data: `נרשם בהצלחה נתת לשליח ${amount} דולר` },
-      { type: 'text', data: blueBoxSpeech(summary) },
-      { type: 'text', data: 'להתראות' },
+    return send(call, [
+      say(`נרשם בהצלחה נתת לשליח ${amount} דולר`),
+      say(blueBoxSpeech(summary)),
+      say('להתראות'),
     ]);
   } catch (err) {
     if (err && err.isExitError) return;               // המתקשר ניתק — לא שגיאה אמיתית
     console.error('❌ שגיאה בשיחה:', err && err.message ? err.message : err);
     try {
-      return call.id_list_message([{ type: 'text', data: 'אירעה שגיאה נסה שוב מאוחר יותר' }]);
+      return send(call, [say('אירעה שגיאה נסה שוב מאוחר יותר')]);
     } catch (e2) {
       console.error('   (לא ניתן היה לשלוח הודעת שגיאה)');
     }
