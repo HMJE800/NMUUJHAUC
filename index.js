@@ -71,6 +71,11 @@ const send = (call, msgs) => {
 // קריאת מספר עשרוני בבטחה: 16.3 → "16 נקודה 3"
 const sayNum = (n) => String(n).replace('.', ' נקודה ');
 
+// מילות סידור בעברית: פעולה ראשונה, שנייה, שלישית...
+const ORDINALS = ['ראשונה', 'שנייה', 'שלישית', 'רביעית', 'חמישית', 'שישית', 'שביעית', 'שמינית', 'תשיעית', 'עשירית'];
+const ordinal = (i) => ORDINALS[i] || `מספר ${i + 1}`;
+
+
 // שורת מצב השליח (הריבוע הכחול)
 function shipperLine(s) {
   if (s.stillToGive > 0.01)       return `עליך להעביר לשליח עוד ${ils(s.stillToGive)} דולר`;
@@ -214,15 +219,15 @@ router.get('/', async (call) => {
       if (recent.length === 0) {
         return send(call, [say('אין פעולות להשמעה להתראות')]);
       }
-      const msgs = [say(`יש ${recent.length} פעולות אחרונות`)];
+      const msgs = [];
       recent.forEach((e, i) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);     // 23.6.2026 → [23,6,2026]
         const d = parts.slice(0, 2).join(' ');                 // יום וחודש בלבד: "23 6"
-        let line = `פעולה ${i + 1} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}`;
+        msgs.push(say(`פעולה ${ordinal(i)}`));                 // הודעה נפרדת = הפסקה טבעית
+        msgs.push(say(`בתאריך ${d} בשעה ${t} נתתי לשליח ${ils(e.amount)} דולר`));
         const dsc = cleanTxt(e.desc || '');
-        if (dsc) line += ` פירוט ${dsc}`;
-        msgs.push(say(line));
+        if (dsc) msgs.push(say(`פירוט ${dsc}`));
       });
       msgs.push(say('להתראות'));
       return send(call, msgs);
@@ -234,34 +239,32 @@ router.get('/', async (call) => {
       if (all.length === 0) {
         return send(call, [say('אין רשומות במסד להשמעה להתראות')]);
       }
-      const msgs = [say(`שלוש הרשומות האחרונות במסד`)];
+
+      const msgs = [];
       all.forEach((e, i) => {
         const t = String(e.time || '').replace(/:/g, ' ');
         const parts = String(e.date || '').split(/[./]/);
         const d = parts.slice(0, 2).join(' ');
-        msgs.push(say(`רשומה ${i + 1} ${kindLabel(e.kind)} ${ils(e.amount)} דולר בתאריך ${d} בשעה ${t}`));
 
-        // פירוט פריטים ומחירים (בעיקר להזמנות/רכישת סחורה)
+        // כל שורה היא הודעה נפרדת — ימות עושה הפסקה טבעית ביניהן
+        msgs.push(say(`פעולה ${ordinal(i)}`));
+        msgs.push(say(`בתאריך ${d} בשעה ${t} ${kindLabel(e.kind)} ${ils(e.amount)} דולר`));
+
+        // פירוט (משלוחים/הוצאות ב‑desc, הזמנות ב‑note)
+        const detail = cleanTxt(e.note || e.desc || '');
+        if (detail) msgs.push(say(`פירוט ${detail}`));
+
+        // פריטים ומחירים
         if (Array.isArray(e.items) && e.items.length > 0) {
           e.items.forEach((item) => {
-            const prod = cleanTxt(item.product);
-            const opt = cleanTxt(item.option);
-            let line = `${prod} ${opt} ${item.count} ארגזים`;
+            let line = `${cleanTxt(item.product)} ${cleanTxt(item.option)} ${item.count} ארגזים`;
             if (item.boxPrice && item.boxPrice > 0) {
-              const boxes = item.count * BOXES_PER_CRATE;
-              line += ` מחיר לקופסה ${sayNum(item.boxPrice)} דולר ${boxes} קופסאות`;
+              line += ` מחיר לקופסה ${sayNum(item.boxPrice)} דולר ${item.count * BOXES_PER_CRATE} קופסאות`;
             }
             msgs.push(say(line));
           });
         }
-        if (e.discount && e.discount > 0) {
-          msgs.push(say(`הנחה ${sayNum(e.discount)} דולר`));
-        }
-        // פירוט: הזמנות שומרות ב‑note, משלוחים והוצאות שומרים ב‑desc
-        const detail = cleanTxt(e.note || e.desc || '');
-        if (detail) {
-          msgs.push(say(`פירוט ${detail}`));
-        }
+        if (e.discount && e.discount > 0) msgs.push(say(`הנחה ${sayNum(e.discount)} דולר`));
       });
       msgs.push(say('להתראות'));
       return send(call, msgs);
