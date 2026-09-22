@@ -42,7 +42,7 @@ function computeShipperSummary(entries) {
   const moneyAtShipper = given - paidMain;
   const debtToAgent    = debtMain - paidMain;
   const stillToGive    = debtToAgent - moneyAtShipper;
-  return { debtToAgent, stillToGive };
+  return { debtToAgent, stillToGive, moneyAtShipper, given, paidMain };
 }
 
 /* ---------- ניסוח "הריבוע הכחול" ---------- */
@@ -81,6 +81,17 @@ function shipperLine(s) {
   if (s.stillToGive > 0.01)       return `עליך להעביר לשליח עוד ${ils(s.stillToGive)} דולר`;
   else if (s.stillToGive < -0.01) return `יש עודף אצל השליח של ${ils(Math.abs(s.stillToGive))} דולר`;
   else                            return 'אין צורך להעביר עוד לשליח';
+}
+
+// שורת זכות/חובה מול השליח — כמו הריבוע האדום באפליקציה
+// moneyAtShipper = נתת לשליח פחות הועבר לסוכן (קבלת תשלום)
+function shipperBalanceLine(s) {
+  const m = s.moneyAtShipper || 0;
+  let head;
+  if (m < -0.01)      head = `השליח הקדים מכיסו ${ils(Math.abs(m))} דולר`;
+  else if (m > 0.01)  head = `יש אצל השליח כסף שלך ${ils(m)} דולר`;
+  else                head = 'אין זכות ואין חובה מול השליח';
+  return [head, `נתת לשליח ${ils(s.given || 0)} דולר הועבר לסוכן ${ils(s.paidMain || 0)} דולר`];
 }
 
 // שורת החוב/עודף לאחראי
@@ -191,8 +202,8 @@ router.get('/', async (call) => {
 
     // תפריט ראשי
     const choice = await call.read([{ type: 'text',
-      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4 לשמיעת הפעולות האחרונות הקש 5 לשמיעת כל מסד ההזמנות הקש 6' }],
-      'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5, 6] });
+      data: 'להוספת כסף לשליח הקש 1 לשמיעת מצב השליח הקש 2 לשמיעת חוב לאחראי הקש 3 למחיקת הפעולה האחרונה הקש 4 לשמיעת הפעולות האחרונות הקש 5 לשמיעת כל מסד ההזמנות הקש 6 לשמיעת זכות או חובה מול השליח הקש 7' }],
+      'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5, 6, 7] });
     console.log('   בחירת תפריט:', choice);
 
     /* ===== 2: שמיעת מצב השליח (עודף/חוב) בלבד ===== */
@@ -200,6 +211,15 @@ router.get('/', async (call) => {
       const s = await getSummary();
       return send(call, [
         say(shipperLine(s)),
+        say('להתראות'),
+      ]);
+    }
+
+    /* ===== 7: שמיעת זכות/חובה מול השליח ===== */
+    if (choice === '7') {
+      const s = await getSummary();
+      return send(call, [
+        ...shipperBalanceLine(s).map(say),
         say('להתראות'),
       ]);
     }
