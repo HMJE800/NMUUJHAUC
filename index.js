@@ -89,6 +89,15 @@ const send = (call, msgs) => {
   return call.id_list_message(clean);
 };
 
+// תאריך שהסוכן מקליד בתיאור בפורמט אמריקאי (חודש/יום/שנה) → יום.חודש.שנה — זהה לאתר
+function ilDates(t) {
+  return String(t == null ? '' : t).replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/g, (m, mo, d, y) => {
+    mo = +mo; d = +d;
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return m;
+    return `${String(d).padStart(2, '0')}.${String(mo).padStart(2, '0')}.${y}`;
+  });
+}
+
 // קריאת מספר עשרוני בבטחה: הספרות אחרי הנקודה אחת-אחת, כדי ש-3.07 לא יישמע כ-3.7
 // 3.70 → "3 נקודה 7 0" · 3.07 → "3 נקודה 0 7" · 1.5 → "1 נקודה 5"
 const sayNum = (n) => { const [a, b] = String(n).split('.'); return b ? `${a} נקודה ${b.split('').join(' ')}` : a; };
@@ -125,9 +134,21 @@ function shipperBalanceLines(s) {
   const m = s.moneyAtShipper || 0;
   const head = `בית קיבל ממך ${ils(s.given || 0)} דולר והעביר לגימל ${ils(s.paidMain || 0)} דולר`;
   let tail;
-  if (m > 0.01)       tail = `נשארו אצל בית ${ils(m)} דולר להעביר לגימל`;
-  else if (m < -0.01) tail = `בית העביר לגימל ${ils(Math.abs(m))} דולר יותר ממה שקיבל עליך להשלים לו`;
+  if (m > 0.01)       tail = `אלף בזכות אצל בית ${ils(m)} דולר`;
+  else if (m < -0.01) tail = `בית בזכות על אלף ${ils(Math.abs(m))} דולר`;
   else                tail = 'המאזן של בית מאוזן';
+  return [head, tail];
+}
+
+// אלף — הדולרים שלך מול ההוצאות (הקשה 7): כל הדולרים (מה שנתת לבית + מה שאצלך) מול כל מה שגימל הוציא
+function coverLines(s, u) {
+  const total = (s.given || 0) + u.atMe;
+  const c = total - (s.debtMain || 0);
+  const head = `כל הדולרים שלך ${ils(total)} דולר הסוכן הוציא ${ils(s.debtMain || 0)} דולר`;
+  let tail;
+  if (c > 0.01)       tail = `עודף ${ils(c)} דולר מעבר לכל מה שהסוכן הוציא`;
+  else if (c < -0.01) tail = `חסרים ${ils(Math.abs(c))} דולר כדי לכסות את כל מה שהסוכן הוציא`;
+  else                tail = 'מאוזן';
   return [head, tail];
 }
 
@@ -206,8 +227,8 @@ async function confirmed(call, text) {
 
 /* ====================== שלוחה 1 — אלף ====================== */
 async function alefMenu(call) {
-  const choice = await call.read([say('לרישום קניית דולרים הקש 1 לרישום העברה לבית הקש 2 לשמיעת כמה דולרים יש אצלך כעת הקש 3 לשמיעת הקניות וההעברות האחרונות הקש 4 למחיקת הפעולה האחרונה הקש 5 לשמיעת כמה עוד צריך להעביר לבית הקש 6')],
-    'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5, 6] });
+  const choice = await call.read([say('לרישום קניית דולרים הקש 1 לרישום העברה לבית הקש 2 לשמיעת כמה דולרים יש אצלך כעת הקש 3 לשמיעת הקניות וההעברות האחרונות הקש 4 למחיקת הפעולה האחרונה הקש 5 לשמיעת כמה עוד צריך להעביר לבית הקש 6 לשמיעת הדולרים שלך מול ההוצאות הקש 7')],
+    'tap', { max_digits: 1, min_digits: 1, digits_allowed: [1, 2, 3, 4, 5, 6, 7] });
   console.log('   אלף, בחירה:', choice);
 
   /* 1-1: קניית דולרים */
@@ -258,7 +279,7 @@ async function alefMenu(call) {
       msgs.push(say(`פעולה ${ordinal(i)}`));
       if (isUsdBuy(e)) msgs.push(say(`בתאריך ${sayDate(e)} ${e.num ? `קנייה מספר ${e.num} ` : ''}קנית ${ils(e.amount)} דולר ב ${ils(e.ils || 0)} שקלים`));
       else             msgs.push(say(`בתאריך ${sayDate(e)} העברת לבית ${ils(e.amount)} דולר`));
-      const dsc = cleanTxt(e.desc || '');
+      const dsc = cleanTxt(ilDates(e.desc || ''));
       if (dsc && e.desc !== ENTRY_DESC) msgs.push(say(`פירוט ${dsc}`));
     });
     msgs.push(say(atMeLine(computeUsdSummary(entries))));
@@ -280,6 +301,12 @@ async function alefMenu(call) {
     console.log('   🗑️ מחיקת פעולה של אלף:', last.id, deleted ? 'הצליח' : 'לא נמצא');
     if (!deleted) return send(call, [say('הפעולה כבר נמחקה להתראות')]);
     return send(call, [say('הפעולה נמחקה'), say(atMeLine(computeUsdSummary(entries))), say('להתראות')]);
+  }
+
+  /* 1-7: הדולרים שלך מול ההוצאות */
+  if (choice === '7') {
+    const entries = await loadEntries();
+    return send(call, [...coverLines(computeShipperSummary(entries), computeUsdSummary(entries)).map(say), say('להתראות')]);
   }
 
   /* 1-6: כמה עוד צריך להעביר לבית כדי לכסות את החוב לגימל */
@@ -360,7 +387,7 @@ async function gimelMenu(call) {
   recent.forEach((e, i) => {
     msgs.push(say(`פעולה ${ordinal(i)}`));
     msgs.push(say(`בתאריך ${sayDate(e)} ${kindLabel(e.kind)} ${ils(e.amount)} דולר`));
-    const detail = cleanTxt(e.note || e.desc || '');
+    const detail = cleanTxt(ilDates(e.note || e.desc || ''));
     if (detail) msgs.push(say(`פירוט ${detail}`));
     if (Array.isArray(e.items) && e.items.length > 0) {
       e.items.forEach((item) => {
