@@ -215,14 +215,32 @@ const isAgentSpend  = (e) => e.ledger !== 'shipper' && e.ledger !== 'usd' && ['o
 const newestFirst   = (list) => list.slice().sort((a, b) => tsOf(b) - tsOf(a));
 
 /* ---------- קלט מספרי ---------- */
-async function readWhole(call, prompt, maxDigits) {
+// הסכום שהגיע מימות המשיח נרשם ביומן כמו שהוא — כדי שאפשר יהיה לראות מה בדיוק נקלט
+async function readWhole(call, prompt, maxDigits, label = 'סכום שהוקש') {
   const raw = await call.read([say(prompt)], 'tap', { max_digits: maxDigits, min_digits: 1 });
+  console.log(`   ${label}:`, raw);
   const n = parseInt(raw, 10);
   return (n && n > 0) ? n : null;
 }
-async function confirmed(call, text) {
+// התשובה לשאלת אישור, נרשמת ביומן. '1' = אישור; '3' = הקשה מחדש (רק היכן שמוצע); כל דבר אחר = ביטול
+async function confirmAnswer(call, text) {
   const c = await call.read([say(text)], 'tap', { max_digits: 1, min_digits: 1 });
-  return c === '1';
+  console.log('   תשובה לאישור:', c);
+  return c;
+}
+async function confirmed(call, text) {
+  return (await confirmAnswer(call, text)) === '1';
+}
+/* סכום אחד עם שאלת אישור, ואפשרות להקיש אותו מחדש באותה שיחה (הקשה 3).
+   מחזיר { amount } אחרי אישור, { invalid: true } לסכום לא תקין, { cancel: true } לביטול */
+async function amountWithConfirm(call, prompt, maxDigits, confirmText) {
+  for (;;) {
+    const amount = await readWhole(call, prompt, maxDigits);
+    if (!amount) return { invalid: true };
+    const ans = await confirmAnswer(call, confirmText(amount));
+    if (ans === '1') return { amount };
+    if (ans !== '3') return { cancel: true };
+  }
 }
 
 /* ====================== שלוחה 1 — אלף ====================== */
@@ -233,13 +251,16 @@ async function alefMenu(call) {
 
   /* 1-1: קניית דולרים */
   if (choice === '1') {
-    const usd = await readWhole(call, 'נא הקש כמה דולרים קנית ואחריו סולמית', 7);
-    if (!usd) return send(call, [say('סכום לא תקין להתראות')]);
-    const nis = await readWhole(call, 'נא הקש כמה שקלים שילמת ואחריו סולמית', 8);
-    if (!nis) return send(call, [say('סכום לא תקין להתראות')]);
-    const rate = (nis / usd).toFixed(2);
-    if (!await confirmed(call, `קנית ${usd} דולר ב ${nis} שקלים שער ${sayNum(rate)} שקלים לדולר לאישור הקש 1 לביטול הקש 2`)) {
-      return send(call, [say('הפעולה בוטלה להתראות')]);
+    let usd, nis;
+    for (;;) {   // הקשה 3 בשאלת האישור = להקיש מחדש את הדולרים ואת השקלים
+      usd = await readWhole(call, 'נא הקש כמה דולרים קנית ואחריו סולמית', 7, 'דולרים שהוקשו');
+      if (!usd) return send(call, [say('סכום לא תקין להתראות')]);
+      nis = await readWhole(call, 'נא הקש כמה שקלים שילמת ואחריו סולמית', 8, 'שקלים שהוקשו');
+      if (!nis) return send(call, [say('סכום לא תקין להתראות')]);
+      const rate = (nis / usd).toFixed(2);
+      const ans = await confirmAnswer(call, `קנית ${usd} דולר ב ${nis} שקלים שער ${sayNum(rate)} שקלים לדולר לאישור הקש 1 לביטול הקש 2 להקשה מחדש הקש 3`);
+      if (ans === '1') break;
+      if (ans !== '3') return send(call, [say('הפעולה בוטלה להתראות')]);
     }
     const { date, time } = nowParts();
     const entries = await addEntry((list) => ({ id: 'USD-' + Date.now(), ledger: 'usd', kind: 'usd_buy', num: nextBuyNum(list), date, time, amount: usd, ils: nis, desc: ENTRY_DESC }));
@@ -250,11 +271,11 @@ async function alefMenu(call) {
 
   /* 1-2: העברה לבית */
   if (choice === '2') {
-    const amount = await readWhole(call, 'נא הקש כמה דולרים העברת לבית ואחריו סולמית', 7);
-    if (!amount) return send(call, [say('סכום לא תקין להתראות')]);
-    if (!await confirmed(call, `הקשת ${amount} דולר לאישור הקש 1 לביטול הקש 2`)) {
-      return send(call, [say('הפעולה בוטלה להתראות')]);
-    }
+    const r = await amountWithConfirm(call, 'נא הקש כמה דולרים העברת לבית ואחריו סולמית', 7,
+      (a) => `הקשת ${a} דולר לאישור הקש 1 לביטול הקש 2 להקשה מחדש הקש 3`);
+    if (r.invalid) return send(call, [say('סכום לא תקין להתראות')]);
+    if (r.cancel) return send(call, [say('הפעולה בוטלה להתראות')]);
+    const amount = r.amount;
     const { date, time } = nowParts();
     const entries = await addEntry({ id: 'SHP-' + Date.now(), ledger: 'shipper', kind: 'shipper_pay', date, time, amount, desc: ENTRY_DESC });
     console.log('   ✅ העברה לבית:', amount);
@@ -322,11 +343,11 @@ async function betMenu(call) {
 
   /* 2-1: בית העביר לגימל */
   if (choice === '1') {
-    const amount = await readWhole(call, 'נא הקש כמה דולרים בית העביר לגימל ואחריו סולמית', 7);
-    if (!amount) return send(call, [say('סכום לא תקין להתראות')]);
-    if (!await confirmed(call, `הקשת ${amount} דולר לאישור הקש 1 לביטול הקש 2`)) {
-      return send(call, [say('הפעולה בוטלה להתראות')]);
-    }
+    const r = await amountWithConfirm(call, 'נא הקש כמה דולרים בית העביר לגימל ואחריו סולמית', 7,
+      (a) => `הקשת ${a} דולר לאישור הקש 1 לביטול הקש 2 להקשה מחדש הקש 3`);
+    if (r.invalid) return send(call, [say('סכום לא תקין להתראות')]);
+    if (r.cancel) return send(call, [say('הפעולה בוטלה להתראות')]);
+    const amount = r.amount;
     const { date, time } = nowParts();
     const entries = await addEntry({ id: 'PAY-' + Date.now(), kind: 'payment', date, time, amount, desc: ENTRY_DESC });
     console.log('   ✅ בית העביר לגימל:', amount);
